@@ -1,10 +1,18 @@
 from unittest.mock import Mock, patch
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QCheckBox
 from pytestqt.qtbot import QtBot
 
 from buzz.model_loader import ModelType, TranscriptionModel
-from buzz.transcriber.transcriber import TranscriptionOptions
+from buzz.transcriber.transcriber import (
+    FileTranscriptionOptions,
+    OutputFormat,
+    TranscriptionOptions,
+)
+from buzz.widgets.transcriber.file_transcription_form_widget import (
+    FileTranscriptionFormWidget,
+)
 from buzz.widgets.transcriber.file_transcriber_widget import FileTranscriberWidget
 from tests.audio import test_audio_path
 
@@ -69,3 +77,18 @@ class TestFileTranscriberWidget:
             widget.on_model_loaded("")
             mock_err.assert_not_called()
             mock_triggered.assert_called_once()
+
+
+class TestFileTranscriptionFormWidget:
+    def test_should_show_markdown_export_format(self, qtbot: QtBot):
+        widget = FileTranscriptionFormWidget(
+            transcription_options=TranscriptionOptions(),
+            file_transcription_options=FileTranscriptionOptions(),
+        )
+        qtbot.add_widget(widget)
+
+        checkbox_texts = {
+            checkbox.text() for checkbox in widget.findChildren(QCheckBox)
+        }
+
+        assert OutputFormat.MD.value.upper() in checkbox_texts

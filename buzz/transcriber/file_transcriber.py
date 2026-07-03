@@ -226,6 +226,13 @@ def write_output(
                 )
                 file.write(f"{getattr(segment, segment_key)}\n\n")
 
+        elif output_format == OutputFormat.MD:
+            for segment in segments:
+                file.write(
+                    f"- [{to_timestamp(segment.start)} - {to_timestamp(segment.end)}] "
+                    f"{getattr(segment, segment_key).strip()}\n"
+                )
+
     logging.debug("Written transcription output")
 
 

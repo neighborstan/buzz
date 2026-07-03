@@ -8,7 +8,7 @@ from pytestqt.qtbot import QtBot
 from buzz.db.entity.transcription import Transcription
 from buzz.db.entity.transcription_segment import TranscriptionSegment
 from buzz.model_loader import ModelType, WhisperModelSize
-from buzz.transcriber.transcriber import Task
+from buzz.transcriber.transcriber import OutputFormat, Task
 from buzz.widgets.transcription_viewer.export_transcription_menu import (
     ExportTranscriptionMenu,
 )
@@ -71,3 +71,40 @@ class TestExportTranscriptionMenu:
 
         with open(output_file_path, encoding="utf-8") as output_file:
             assert "Bien venue dans" in output_file.read()
+
+    def test_should_export_markdown_segments(
+        self,
+        tmp_path: pathlib.Path,
+        qtbot: QtBot,
+        transcription,
+        transcription_service,
+        shortcuts,
+        mocker,
+    ):
+        output_file_path = tmp_path / "whisper.md"
+        mocker.patch(
+            "PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+            return_value=(str(output_file_path), ""),
+        )
+
+        translation_signal = TranslationSignal()
+
+        widget = ExportTranscriptionMenu(
+            transcription,
+            transcription_service,
+            False,
+            translation_signal.translation
+        )
+        qtbot.add_widget(widget)
+
+        markdown_action = next(
+            action for action in widget.actions()
+            if action.text().startswith(OutputFormat.MD.value.upper())
+        )
+        markdown_action.trigger()
+
+        with open(output_file_path, encoding="utf-8") as output_file:
+            assert output_file.read() == (
+                "- [00:00:00.040 - 00:00:00.299] Bien\n"
+                "- [00:00:00.299 - 00:00:00.329] venue dans\n"
+            )

@@ -213,6 +213,7 @@ class OutputFormat(enum.Enum):
     TXT = "txt"
     SRT = "srt"
     VTT = "vtt"
+    MD = "md"
 
 
 class Stopped(Exception):
