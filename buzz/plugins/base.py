@@ -92,6 +92,7 @@ class ConfigFieldType(enum.Enum):
     TEXTAREA = "textarea"  # multi-line input
     BOOL = "bool"  # checkbox
     PASSWORD = "password"  # masked input with show toggle, stored in the keyring
+    CHOICE = "choice"  # combo box, optionally editable for custom values
 
 
 @dataclass
@@ -104,6 +105,8 @@ class ConfigField:
     default: Any = ""
     description: str = ""
     placeholder: str = ""
+    choices: List[str] = field(default_factory=list)
+    editable: bool = False
 
 
 @dataclass

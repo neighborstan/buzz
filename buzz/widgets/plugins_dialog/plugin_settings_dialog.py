@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QDialogButtonBox,
     QLabel,
+    QComboBox,
 )
 
 from buzz.locale import _
@@ -81,6 +82,20 @@ class PluginSettingsDialog(QDialog):
             checkbox = QCheckBox(self)
             checkbox.setChecked(_coerce_bool(value))
             return checkbox
+        if field.type == ConfigFieldType.CHOICE:
+            combo = QComboBox(self)
+            combo.addItems(list(field.choices or []))
+            combo.setEditable(bool(field.editable))
+            text = str(value) if value is not None else ""
+            if text and combo.findText(text) < 0:
+                if field.editable:
+                    combo.setEditText(text)
+                else:
+                    combo.addItem(text)
+                    combo.setCurrentText(text)
+            else:
+                combo.setCurrentText(text)
+            return combo
         if field.type == ConfigFieldType.TEXTAREA:
             editor = QPlainTextEdit(self)
             editor.setPlainText(str(value) if value is not None else "")
@@ -100,6 +115,8 @@ class PluginSettingsDialog(QDialog):
     def _editor_value(self, field, editor):
         if field.type == ConfigFieldType.BOOL:
             return editor.isChecked()
+        if field.type == ConfigFieldType.CHOICE:
+            return editor.currentText()
         if field.type == ConfigFieldType.TEXTAREA:
             return editor.toPlainText()
         return editor.text()

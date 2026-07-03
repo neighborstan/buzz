@@ -7,5 +7,15 @@
   "Cleanup prompt": "Cleanup prompt",
   "Save prepared transcript to a file": "Save prepared transcript to a file",
   "Output folder": "Output folder",
-  "Leave empty to save next to the source file.": "Leave empty to save next to the source file."
+  "Leave empty to save next to the source file.": "Leave empty to save next to the source file.",
+  "Use a preset or enter a custom model id.": "Use a preset or enter a custom model id.",
+  "Reasoning effort": "Reasoning effort",
+  "Advanced setting. high and xhigh can be slower or more expensive.": "Advanced setting. high and xhigh can be slower or more expensive.",
+  "Clean up punctuation": "Clean up punctuation",
+  "Normalize terminology": "Normalize terminology",
+  "Clean up speaker labels": "Clean up speaker labels",
+  "Lightly remove filler words": "Lightly remove filler words",
+  "Strictly preserve meaning": "Strictly preserve meaning",
+  "Additional cleanup instructions": "Additional cleanup instructions",
+  "Optional extra instructions appended after the built-in no-summary guardrails.": "Optional extra instructions appended after the built-in no-summary guardrails."
 }

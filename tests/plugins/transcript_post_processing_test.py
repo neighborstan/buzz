@@ -1,7 +1,8 @@
 import logging
 
-from buzz.plugins.base import PluginContext
+from buzz.plugins.base import ConfigFieldType, PluginContext
 from buzz.plugins.loader import load_plugin_from_dir
+from buzz.plugins.transcript_post_processing import models as tpp_models
 from buzz.plugins.transcript_post_processing import plugin as tpp
 from buzz.transcriber.transcriber import Segment
 
@@ -31,9 +32,15 @@ def _context(config):
 def _config(tmp_path, **overrides):
     config = {
         "api_key": "key",
-        "api_url": "https://example.com/v1",
+        "api_url": "https://api.openai.com/v1",
         "model": "gpt-5.4-mini",
-        "prompt": tpp.DEFAULT_PROMPT,
+        "reasoning_effort": "medium",
+        "cleanup_punctuation": True,
+        "normalize_terminology": True,
+        "cleanup_speaker_labels": True,
+        "remove_fillers": True,
+        "preserve_meaning": True,
+        "prompt": "",
         "save_to_file": True,
         "output_folder": str(tmp_path),
     }
@@ -50,10 +57,24 @@ def test_transcript_post_processing_plugin_loads():
         "api_url",
         "api_key",
         "model",
+        "reasoning_effort",
+        "cleanup_punctuation",
+        "normalize_terminology",
+        "cleanup_speaker_labels",
+        "remove_fillers",
+        "preserve_meaning",
         "prompt",
         "save_to_file",
         "output_folder",
     ]
+    fields = {field.key: field for field in loaded.metadata.config_fields}
+    assert fields["model"].type == ConfigFieldType.CHOICE
+    assert fields["model"].editable is True
+    assert fields["model"].choices == list(tpp_models.POST_PROCESSING_MODEL_PRESETS)
+    assert fields["reasoning_effort"].type == ConfigFieldType.CHOICE
+    assert fields["reasoning_effort"].choices == list(
+        tpp_models.REASONING_EFFORT_VALUES
+    )
     assert "Do not summarize" in tpp.DEFAULT_PROMPT
     assert "Preserve speaker labels" in tpp.DEFAULT_PROMPT
     assert "Preserve chronological order" in tpp.DEFAULT_PROMPT
@@ -79,27 +100,17 @@ def test_format_transcript_includes_timestamps_and_speaker_labels():
 def test_on_complete_writes_prepared_markdown(tmp_path, monkeypatch):
     captured = {}
 
-    class _Message:
-        content = "# Prepared\n\nspeaker_0: Hello."
-
-    class _Choice:
-        message = _Message()
-
-    class _Completion:
-        choices = [_Choice()]
+    class _Response:
+        output_text = "# Prepared\n\nspeaker_0: Hello."
 
     class _FakeClient:
         def __init__(self, *args, **kwargs):
             captured["client"] = kwargs
-            self.chat = self
-
-        @property
-        def completions(self):
-            return self
+            self.responses = self
 
         def create(self, *args, **kwargs):
             captured["request"] = kwargs
-            return _Completion()
+            return _Response()
 
     import openai
 
@@ -114,24 +125,28 @@ def test_on_complete_writes_prepared_markdown(tmp_path, monkeypatch):
         "tid",
         _Task(file_path=source, original_file_path=source),
         segments,
-        _context(_config(output_folder)),
+        _context(_config(output_folder, reasoning_effort="high")),
     )
 
     out_file = output_folder / "meeting.prepared.md"
     assert out_file.read_text(encoding="utf-8") == "# Prepared\n\nspeaker_0: Hello.\n"
     assert captured["client"]["api_key"] == "key"
-    assert captured["client"]["base_url"] == "https://example.com/v1"
+    assert captured["client"]["base_url"] == "https://api.openai.com/v1"
     assert captured["request"]["model"] == "gpt-5.4-mini"
-    assert captured["request"]["messages"][0]["content"] == tpp.DEFAULT_PROMPT.strip()
-    user_message = captured["request"]["messages"][1]["content"]
+    assert captured["request"]["reasoning"] == {"effort": "high"}
+    assert "Do not summarize" in captured["request"]["instructions"]
+    assert "Improve punctuation" in captured["request"]["instructions"]
+    user_message = captured["request"]["input"]
     assert "Transcript:" in user_message
     assert "speaker_0: hello" in user_message
     assert "00:00:00.000" in user_message
 
 
-def test_on_complete_uses_task_output_directory_when_config_folder_empty(
+def test_custom_base_url_uses_chat_completions_without_reasoning(
     tmp_path, monkeypatch
 ):
+    captured = {}
+
     class _Message:
         content = "prepared"
 
@@ -141,16 +156,65 @@ def test_on_complete_uses_task_output_directory_when_config_folder_empty(
     class _Completion:
         choices = [_Choice()]
 
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            self.chat = self
-
+    class _Chat:
         @property
         def completions(self):
             return self
 
         def create(self, *args, **kwargs):
+            captured["request"] = kwargs
             return _Completion()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            captured["client"] = kwargs
+            self.chat = _Chat()
+
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", _FakeClient)
+
+    source = tmp_path / "meeting.wav"
+    source.write_bytes(b"")
+    output_folder = tmp_path / "out"
+    segments = [Segment(0, 1000, "speaker_0: hello")]
+
+    tpp.TranscriptPostProcessingPlugin().on_complete(
+        "tid",
+        _Task(file_path=source, original_file_path=source),
+        segments,
+        _context(
+            _config(
+                output_folder,
+                api_url="https://example.com/v1",
+                model="custom-model",
+                reasoning_effort="xhigh",
+            )
+        ),
+    )
+
+    out_file = output_folder / "meeting.prepared.md"
+    assert out_file.read_text(encoding="utf-8") == "prepared\n"
+    assert captured["client"]["api_key"] == "key"
+    assert captured["client"]["base_url"] == "https://example.com/v1"
+    assert captured["request"]["model"] == "custom-model"
+    assert "reasoning" not in captured["request"]
+    assert "Do not summarize" in captured["request"]["messages"][0]["content"]
+    user_message = captured["request"]["messages"][1]["content"]
+    assert "Transcript:" in user_message
+    assert "speaker_0: hello" in user_message
+    assert "00:00:00.000" in user_message
+
+
+def test_on_complete_uses_task_output_directory_when_config_folder_empty(
+    tmp_path, monkeypatch
+):
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.responses = self
+
+        def create(self, *args, **kwargs):
+            return type("_Response", (), {"output_text": "prepared"})()
 
     import openai
 
@@ -175,6 +239,58 @@ def test_on_complete_uses_task_output_directory_when_config_folder_empty(
     assert (output_folder / "meeting.prepared.md").read_text(
         encoding="utf-8"
     ) == "prepared\n"
+
+
+def test_build_cleanup_prompt_uses_controls():
+    prompt = tpp._build_cleanup_prompt(
+        _config(
+            ".",
+            cleanup_punctuation=False,
+            normalize_terminology=False,
+            cleanup_speaker_labels=True,
+            remove_fillers=False,
+            preserve_meaning=True,
+            prompt="Keep project names exactly.",
+        )
+    )
+
+    assert "Do not summarize" in prompt
+    assert "Preserve chronological order" in prompt
+    assert "Improve punctuation" not in prompt
+    assert "Normalize obvious recognition mistakes" not in prompt
+    assert "Keep speaker labels stable" in prompt
+    assert "Remove only obvious filler" not in prompt
+    assert "Preserve the original meaning" in prompt
+    assert "Additional user instructions:" in prompt
+    assert "Keep project names exactly." in prompt
+
+
+def test_old_default_prompt_is_not_duplicated():
+    prompt = tpp._build_cleanup_prompt(_config(".", prompt=tpp.DEFAULT_PROMPT))
+
+    assert prompt.count("Do not summarize") == 1
+
+
+def test_extract_responses_text_from_output_content():
+    response = type(
+        "_Response",
+        (),
+        {
+            "output": [
+                type(
+                    "_Item",
+                    (),
+                    {
+                        "content": [
+                            type("_Content", (), {"text": "from content"})()
+                        ]
+                    },
+                )()
+            ]
+        },
+    )()
+
+    assert tpp._extract_responses_text(response) == "from content"
 
 
 def test_on_complete_skips_without_api_key(tmp_path, monkeypatch):
@@ -216,11 +332,7 @@ def test_on_complete_skips_empty_transcript(tmp_path, monkeypatch):
 def test_on_complete_keeps_segments_when_api_fails(tmp_path, monkeypatch):
     class _FakeClient:
         def __init__(self, *args, **kwargs):
-            self.chat = self
-
-        @property
-        def completions(self):
-            return self
+            self.responses = self
 
         def create(self, *args, **kwargs):
             raise RuntimeError("network failed")
