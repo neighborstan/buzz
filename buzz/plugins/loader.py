@@ -33,6 +33,7 @@ BUNDLED_PLUGIN_IDS = [
     "ai_summary",
     "transcript_resizer",
     "export_docx",
+    "transcript_post_processing",
     "enhanced_language_detection",
     "skip_already_transcribed",
     "deep_filter_net",

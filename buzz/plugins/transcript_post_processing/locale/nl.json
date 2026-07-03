@@ -1,0 +1,11 @@
+{
+  "Transcript Post-processing": "Transcript Post-processing",
+  "Clean up the full transcript via an OpenAI-compatible API and save a prepared Markdown transcript.": "Clean up the full transcript via an OpenAI-compatible API and save a prepared Markdown transcript.",
+  "API base URL": "API base URL",
+  "API key": "API key",
+  "Post-processing model": "Post-processing model",
+  "Cleanup prompt": "Cleanup prompt",
+  "Save prepared transcript to a file": "Save prepared transcript to a file",
+  "Output folder": "Output folder",
+  "Leave empty to save next to the source file.": "Leave empty to save next to the source file."
+}
