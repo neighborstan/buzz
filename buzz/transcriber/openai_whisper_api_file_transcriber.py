@@ -13,6 +13,10 @@ from openai import OpenAI
 
 from buzz.settings.settings import Settings
 from buzz.transcriber.file_transcriber import FileTranscriber, app_env
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    openai_stt_model_id_from_display_text,
+)
 from buzz.transcriber.transcriber import FileTranscriptionTask, Segment, Task
 
 
@@ -48,8 +52,11 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
             base_url=custom_openai_base_url if custom_openai_base_url else None,
             max_retries=0
         )
-        self.whisper_api_model = settings.value(
-            key=Settings.Key.OPENAI_API_MODEL, default_value="whisper-1"
+        self.whisper_api_model = openai_stt_model_id_from_display_text(
+            settings.value(
+                key=Settings.Key.OPENAI_API_MODEL,
+                default_value=OPENAI_STT_DEFAULT_MODEL,
+            )
         )
         self.word_level_timings = self.transcription_task.transcription_options.word_level_timings
         logging.debug("Will use whisper API on %s, %s",

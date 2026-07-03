@@ -26,6 +26,10 @@ from buzz.locale import _
 from buzz.assets import APP_BASE_DIR
 from buzz.model_loader import ModelType, map_language_to_mms
 from buzz.settings.settings import Settings
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    openai_stt_model_id_from_display_text,
+)
 from buzz.transcriber.transcriber import TranscriptionOptions, Task, DEFAULT_WHISPER_TEMPERATURE
 from buzz.transformers_whisper import TransformersTranscriber
 from buzz.settings.recording_transcriber_mode import RecordingTranscriberMode
@@ -73,8 +77,11 @@ class RecordingTranscriber(QObject):
         self.mutex = threading.Lock()
         self.sounddevice = sounddevice
         self.openai_client = None
-        self.whisper_api_model = self.settings.value(
-            key=Settings.Key.OPENAI_API_MODEL, default_value="whisper-1"
+        self.whisper_api_model = openai_stt_model_id_from_display_text(
+            self.settings.value(
+                key=Settings.Key.OPENAI_API_MODEL,
+                default_value=OPENAI_STT_DEFAULT_MODEL,
+            )
         )
         self.process = None
         self._stderr_lines: list[bytes] = []

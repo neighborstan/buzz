@@ -4,7 +4,7 @@ import requests
 from typing import Optional
 from platformdirs import user_documents_dir
 
-from PyQt6.QtCore import QRunnable, QObject, pyqtSignal, QThreadPool, QLocale
+from PyQt6.QtCore import QRunnable, QObject, pyqtSignal, QThreadPool, QLocale, Qt
 from PyQt6.QtWidgets import (
     QWidget,
     QFormLayout,
@@ -28,6 +28,12 @@ from buzz.widgets.openai_api_key_line_edit import OpenAIAPIKeyLineEdit
 from buzz.locale import _
 from buzz.widgets.icon import INFO_ICON_PATH
 from buzz.settings.recording_transcriber_mode import RecordingTranscriberMode
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    OPENAI_STT_MODEL_PRESETS,
+    openai_stt_model_display_text,
+    openai_stt_model_id_from_display_text,
+)
 
 BASE64_PATTERN = re.compile(r'^[A-Za-z0-9+/=_-]*$')
 
@@ -127,16 +133,37 @@ class GeneralPreferencesWidget(QWidget):
         layout.addRow(_("OpenAI base url"), self.custom_openai_base_url_line_edit)
 
         self.openai_api_model = self.settings.value(
-            key=Settings.Key.OPENAI_API_MODEL, default_value="whisper-1"
+            key=Settings.Key.OPENAI_API_MODEL, default_value=OPENAI_STT_DEFAULT_MODEL
         )
 
-        self.openai_api_model_line_edit = LineEdit(self.openai_api_model, self)
-        self.openai_api_model_line_edit.textChanged.connect(
+        self.openai_api_model_combo_box = QComboBox(self)
+        self.openai_api_model_combo_box.setEditable(True)
+        self.openai_api_model_combo_box.setMinimumWidth(200)
+        self.openai_api_model_combo_box.lineEdit().setPlaceholderText(OPENAI_STT_DEFAULT_MODEL)
+
+        for preset in OPENAI_STT_MODEL_PRESETS:
+            self.openai_api_model_combo_box.addItem(preset.label, preset.model_id)
+            index = self.openai_api_model_combo_box.count() - 1
+            if preset.tooltip:
+                self.openai_api_model_combo_box.setItemData(
+                    index,
+                    preset.tooltip,
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+
+        current_model_id = openai_stt_model_id_from_display_text(self.openai_api_model)
+        current_model_index = self.openai_api_model_combo_box.findData(current_model_id)
+        if current_model_index >= 0:
+            self.openai_api_model_combo_box.setCurrentIndex(current_model_index)
+        else:
+            self.openai_api_model_combo_box.setEditText(
+                openai_stt_model_display_text(self.openai_api_model)
+            )
+
+        self.openai_api_model_combo_box.currentTextChanged.connect(
             self.on_openai_api_model_changed
         )
-        self.openai_api_model_line_edit.setMinimumWidth(200)
-        self.openai_api_model_line_edit.setPlaceholderText("whisper-1")
-        layout.addRow(_("OpenAI API model"), self.openai_api_model_line_edit)
+        layout.addRow(_("OpenAI API model"), self.openai_api_model_combo_box)
 
         default_export_file_name = self.settings.get_default_export_file_template()
 
@@ -270,7 +297,10 @@ class GeneralPreferencesWidget(QWidget):
         self.settings.set_value(Settings.Key.CUSTOM_OPENAI_BASE_URL, text)
 
     def on_openai_api_model_changed(self, text: str):
-        self.settings.set_value(Settings.Key.OPENAI_API_MODEL, text)
+        self.settings.set_value(
+            Settings.Key.OPENAI_API_MODEL,
+            openai_stt_model_id_from_display_text(text),
+        )
 
     def on_recording_export_enable_changed(self, state: int):
         self.recording_export_enabled = state == 2

@@ -1,8 +1,13 @@
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QPushButton, QMessageBox, QLineEdit, QCheckBox
+from PyQt6.QtWidgets import QPushButton, QMessageBox, QLineEdit, QCheckBox, QComboBox
 
 from buzz.locale import _
 from buzz.settings.settings import Settings
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    OPENAI_STT_LEGACY_MODEL,
+    OPENAI_STT_MODEL_PRESETS,
+)
 from buzz.widgets.preferences_dialog.general_preferences_widget import (
     GeneralPreferencesWidget, ValidateOpenAIApiKeyJob
 )
@@ -108,6 +113,55 @@ class TestGeneralPreferencesWidget:
         )
 
         assert updated_openai_base_url == "http://localhost:11434/v1"
+
+    def test_openai_api_model_preferences_show_default_and_presets(self, qtbot):
+        settings = Settings()
+        settings.clear()
+
+        widget = GeneralPreferencesWidget()
+        qtbot.add_widget(widget)
+
+        combo_box = widget.openai_api_model_combo_box
+        assert isinstance(combo_box, QComboBox)
+        assert combo_box.currentText() == OPENAI_STT_DEFAULT_MODEL
+
+        preset_labels = [combo_box.itemText(i) for i in range(combo_box.count())]
+        assert preset_labels == [preset.label for preset in OPENAI_STT_MODEL_PRESETS]
+        assert f"{OPENAI_STT_LEGACY_MODEL} (legacy/fallback)" in preset_labels
+
+    def test_openai_api_model_preferences_save_preset_model_id(self, qtbot):
+        settings = Settings()
+        settings.clear()
+
+        widget = GeneralPreferencesWidget()
+        qtbot.add_widget(widget)
+
+        combo_box = widget.openai_api_model_combo_box
+        legacy_index = combo_box.findData(OPENAI_STT_LEGACY_MODEL)
+        combo_box.setCurrentIndex(legacy_index)
+
+        assert settings.value(
+            key=Settings.Key.OPENAI_API_MODEL,
+            default_value="",
+        ) == OPENAI_STT_LEGACY_MODEL
+
+    def test_openai_api_model_preferences_save_and_restore_custom_model(self, qtbot):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, "custom-transcribe-model")
+
+        widget = GeneralPreferencesWidget()
+        qtbot.add_widget(widget)
+
+        combo_box = widget.openai_api_model_combo_box
+        assert combo_box.currentText() == "custom-transcribe-model"
+
+        combo_box.setEditText("another-compatible-model")
+
+        assert settings.value(
+            key=Settings.Key.OPENAI_API_MODEL,
+            default_value="",
+        ) == "another-compatible-model"
 
 
 class TestTestOpenAIApiKeyJob:
