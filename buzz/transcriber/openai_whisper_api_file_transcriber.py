@@ -234,6 +234,19 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
 
         return []
 
+    @classmethod
+    def get_segment_text(cls, segment) -> str:
+        text = cls.get_value(segment, "text", "")
+        speaker = cls.get_value(segment, "speaker")
+        if speaker is None:
+            return text
+
+        speaker_label = str(speaker).strip()
+        if not speaker_label:
+            return text
+
+        return f"{speaker_label}: {text}"
+
     def build_openai_request_options(self, audio_file):
         model = (
             self.whisper_api_model
@@ -338,7 +351,7 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
                     Segment(
                         int(self.get_value(segment, "start", 0) * 1000 + offset_ms),
                         int(self.get_value(segment, "end", 0) * 1000 + offset_ms),
-                        self.get_value(segment, "text", ""),
+                        self.get_segment_text(segment),
                     )
                     for segment in segments
                 ]

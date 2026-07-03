@@ -24,6 +24,19 @@ from buzz.transcriber.transcriber import (
 from openai.types.audio import Transcription, Translation
 
 
+class DiarizedSegmentResponse:
+    def __init__(self, text, start, end, speaker=None):
+        self.text = text
+        self.start = start
+        self.end = end
+        self.speaker = speaker
+
+
+class DiarizedResponse:
+    def __init__(self, segments):
+        self.segments = segments
+
+
 class TestAppendSegment:
     def test_valid_utf8(self):
         result = []
@@ -228,7 +241,7 @@ class TestOpenAIWhisperAPIFileTranscriber:
 
         call_kwargs = mock_openai_client.return_value.audio.transcriptions.create.call_args.kwargs
         assert call_kwargs["model"] == OPENAI_STT_DIARIZATION_MODEL
-        assert call_kwargs["response_format"] == "json"
+        assert call_kwargs["response_format"] == "diarized_json"
         assert call_kwargs["chunking_strategy"] == "auto"
         assert "prompt" not in call_kwargs
         assert "timestamp_granularities" not in call_kwargs
@@ -324,4 +337,71 @@ class TestOpenAIWhisperAPIFileTranscriber:
 
         assert transcriber.get_segments_for_file(str(file_path)) == [
             Segment(start=0, end=0, text="Hello plain")
+        ]
+
+    def test_diarization_dict_response_preserves_speakers_order_and_offset(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, OPENAI_STT_DIARIZATION_MODEL)
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = {
+            "segments": [
+                {
+                    "speaker": "speaker_0",
+                    "text": "Hello",
+                    "start": 0.5,
+                    "end": 1.25,
+                },
+                {
+                    "speaker": "speaker_1",
+                    "text": "Hi",
+                    "start": 1.5,
+                    "end": 2.0,
+                },
+            ]
+        }
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(str(file_path))
+        )
+
+        assert transcriber.get_segments_for_file(str(file_path), offset_ms=2000) == [
+            Segment(start=2500, end=3250, text="speaker_0: Hello"),
+            Segment(start=3500, end=4000, text="speaker_1: Hi"),
+        ]
+
+    def test_diarization_object_response_does_not_invent_missing_speaker(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, OPENAI_STT_DIARIZATION_MODEL)
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = DiarizedResponse(
+            [
+                DiarizedSegmentResponse(
+                    speaker="speaker_0",
+                    text="Hello",
+                    start=0,
+                    end=1.0,
+                ),
+                DiarizedSegmentResponse(
+                    text="No label",
+                    start=1.0,
+                    end=2.0,
+                ),
+            ]
+        )
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(str(file_path))
+        )
+
+        assert transcriber.get_segments_for_file(str(file_path)) == [
+            Segment(start=0, end=1000, text="speaker_0: Hello"),
+            Segment(start=1000, end=2000, text="No label"),
         ]

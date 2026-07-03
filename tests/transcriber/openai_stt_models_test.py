@@ -22,7 +22,6 @@ from buzz.transcriber.openai_stt_models import (
         OPENAI_STT_DEFAULT_MODEL,
         OPENAI_STT_MINI_MODEL,
         OPENAI_STT_MINI_SNAPSHOT_MODEL,
-        OPENAI_STT_DIARIZATION_MODEL,
     ],
 )
 def test_known_openai_gpt_stt_models_use_json_without_timestamps(model_id):
@@ -31,9 +30,12 @@ def test_known_openai_gpt_stt_models_use_json_without_timestamps(model_id):
     assert openai_stt_supports_timestamp_granularities(model_id) is False
 
 
-def test_diarization_model_does_not_support_prompt_and_uses_chunking():
+def test_diarization_model_uses_diarized_json_without_prompt_and_uses_chunking():
     assert is_openai_stt_diarization_model(OPENAI_STT_DIARIZATION_MODEL) is True
+    assert is_known_openai_gpt_stt_model(OPENAI_STT_DIARIZATION_MODEL) is True
+    assert openai_stt_transcription_response_format(OPENAI_STT_DIARIZATION_MODEL) == "diarized_json"
     assert openai_stt_supports_prompt(OPENAI_STT_DIARIZATION_MODEL) is False
+    assert openai_stt_supports_timestamp_granularities(OPENAI_STT_DIARIZATION_MODEL) is False
     assert openai_stt_uses_chunking_strategy(OPENAI_STT_DIARIZATION_MODEL) is True
 
 

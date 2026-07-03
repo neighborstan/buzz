@@ -79,6 +79,9 @@ def is_openai_stt_diarization_model(model_id: str) -> bool:
 
 
 def openai_stt_transcription_response_format(model_id: str) -> str:
+    if is_openai_stt_diarization_model(model_id):
+        return "diarized_json"
+
     if is_known_openai_gpt_stt_model(model_id):
         return "json"
 
