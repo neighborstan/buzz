@@ -16,6 +16,11 @@ from buzz.transcriber.file_transcriber import FileTranscriber, app_env
 from buzz.transcriber.openai_stt_models import (
     OPENAI_STT_DEFAULT_MODEL,
     openai_stt_model_id_from_display_text,
+    openai_stt_supports_prompt,
+    openai_stt_supports_timestamp_granularities,
+    openai_stt_transcription_response_format,
+    openai_stt_translation_model,
+    openai_stt_uses_chunking_strategy,
 )
 from buzz.transcriber.transcriber import FileTranscriptionTask, Segment, Task
 
@@ -197,20 +202,71 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
             return segment.get(key, default)
         return default
 
+    @staticmethod
+    def get_model_extra(response):
+        model_extra = getattr(response, "model_extra", None)
+        return model_extra if isinstance(model_extra, dict) else {}
+
+    @classmethod
+    def get_response_value(cls, response, key, default=None):
+        value = cls.get_value(response, key)
+        if value is not None:
+            return value
+
+        return cls.get_model_extra(response).get(key, default)
+
+    @classmethod
+    def get_response_text(cls, response):
+        if isinstance(response, str):
+            return response
+
+        return cls.get_response_value(response, "text", "")
+
+    @classmethod
+    def get_response_segments(cls, response, words=None):
+        segments = cls.get_response_value(response, "segments")
+        if segments:
+            return segments
+
+        text = cls.get_response_text(response)
+        if text:
+            return [{"text": text, "start": 0, "end": 0, "words": words}]
+
+        return []
+
+    def build_openai_request_options(self, audio_file):
+        model = (
+            self.whisper_api_model
+            if self.task == Task.TRANSCRIBE
+            else openai_stt_translation_model(self.whisper_api_model)
+        )
+
+        options = {
+            "model": model,
+            "file": audio_file,
+            "response_format": (
+                openai_stt_transcription_response_format(model)
+                if self.task == Task.TRANSCRIBE
+                else "verbose_json"
+            ),
+        }
+
+        initial_prompt = self.transcription_task.transcription_options.initial_prompt
+        if initial_prompt and openai_stt_supports_prompt(model):
+            options["prompt"] = initial_prompt
+
+        if self.task == Task.TRANSCRIBE:
+            if self.word_level_timings and openai_stt_supports_timestamp_granularities(model):
+                options["timestamp_granularities"] = ["word"]
+
+            if openai_stt_uses_chunking_strategy(model):
+                options["chunking_strategy"] = "auto"
+
+        return options
+
     def get_segments_for_file(self, file: str, offset_ms: int = 0):
         with open(file, "rb") as file:
-            # gpt-4o models don't support verbose_json format
-            response_format = "json" if self.whisper_api_model.startswith("gpt-4o") else "verbose_json"
-
-            options = {
-                "model": self.whisper_api_model,
-                "file": file,
-                "response_format": response_format,
-                "prompt": self.transcription_task.transcription_options.initial_prompt,
-            }
-
-            if self.word_level_timings:
-                options["timestamp_granularities"] = ["word"]
+            options = self.build_openai_request_options(file)
 
             transcript = (
                 self.openai_client.audio.transcriptions.create(
@@ -221,21 +277,14 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
                 else self.openai_client.audio.translations.create(**options)
             )
 
-            segments = getattr(transcript, "segments", None)
-
-            words = getattr(transcript, "words", None)
-            if words is None and "words" in transcript.model_extra:
-                words = transcript.model_extra["words"]
-
-            if segments is None:
-                if "segments" in transcript.model_extra:
-                    segments = transcript.model_extra["segments"]
-                else:
-                    # gpt-4o models return only text without segments/timestamps
-                    segments = [{"text": transcript.text, "start": 0, "end": 0, "words": words}]
+            words = self.get_response_value(transcript, "words")
+            segments = self.get_response_segments(transcript, words)
 
             result_segments = []
-            if self.word_level_timings:
+            has_word_level_segments = any(
+                self.get_value(segment, "words") for segment in segments
+            )
+            if self.word_level_timings and has_word_level_segments:
 
                 # Detect response from whisper.cpp API
                 first_segment = segments[0] if segments else None
@@ -276,7 +325,7 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
 
                 else:
                     for segment in segments:
-                        for word in self.get_value(segment, "words"):
+                        for word in self.get_value(segment, "words") or []:
                             result_segments.append(
                                 Segment(
                                     int(self.get_value(word, "start") * 1000 + offset_ms),

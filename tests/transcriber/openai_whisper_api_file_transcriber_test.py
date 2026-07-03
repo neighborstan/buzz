@@ -4,7 +4,11 @@ from unittest.mock import patch, Mock
 import pytest
 
 from buzz.settings.settings import Settings
-from buzz.transcriber.openai_stt_models import OPENAI_STT_DEFAULT_MODEL
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    OPENAI_STT_DIARIZATION_MODEL,
+    OPENAI_STT_LEGACY_MODEL,
+)
 from buzz.transcriber.openai_whisper_api_file_transcriber import (
     OpenAIWhisperAPIFileTranscriber,
     append_segment,
@@ -14,6 +18,7 @@ from buzz.transcriber.transcriber import (
     TranscriptionOptions,
     FileTranscriptionOptions,
     Segment,
+    Task,
 )
 
 from openai.types.audio import Transcription, Translation
@@ -81,13 +86,15 @@ class TestGetValue:
 
 class TestOpenAIWhisperAPIFileTranscriber:
     @staticmethod
-    def make_task(file_path: str) -> FileTranscriptionTask:
+    def make_task(
+        file_path: str,
+        transcription_options: TranscriptionOptions | None = None,
+    ) -> FileTranscriptionTask:
         return FileTranscriptionTask(
             file_path=file_path,
             transcription_options=(
-                TranscriptionOptions(
-                    openai_access_token=os.getenv("OPENAI_ACCESS_TOKEN"),
-                )
+                transcription_options
+                or TranscriptionOptions(openai_access_token=os.getenv("OPENAI_ACCESS_TOKEN"))
             ),
             file_transcription_options=(
                 FileTranscriptionOptions(file_paths=[file_path])
@@ -163,3 +170,158 @@ class TestOpenAIWhisperAPIFileTranscriber:
 
         call_kwargs = mock_openai_client.return_value.audio.transcriptions.create.call_args.kwargs
         assert call_kwargs["model"] == "gpt-4o-mini-transcribe"
+
+    def test_gpt_transcription_request_uses_json_prompt_without_timestamps(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, "gpt-4o-mini-transcribe")
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = Transcription(
+            text="Hello"
+        )
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(
+                str(file_path),
+                TranscriptionOptions(
+                    initial_prompt="Project terms",
+                    word_level_timings=True,
+                ),
+            )
+        )
+
+        segments = transcriber.get_segments_for_file(str(file_path))
+
+        call_kwargs = mock_openai_client.return_value.audio.transcriptions.create.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-4o-mini-transcribe"
+        assert call_kwargs["response_format"] == "json"
+        assert call_kwargs["prompt"] == "Project terms"
+        assert "timestamp_granularities" not in call_kwargs
+        assert segments == [Segment(start=0, end=0, text="Hello")]
+
+    def test_diarization_transcription_request_omits_unsupported_parameters(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, OPENAI_STT_DIARIZATION_MODEL)
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = Transcription(
+            text="Speaker text"
+        )
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(
+                str(file_path),
+                TranscriptionOptions(
+                    initial_prompt="Do not send this",
+                    word_level_timings=True,
+                ),
+            )
+        )
+
+        segments = transcriber.get_segments_for_file(str(file_path))
+
+        call_kwargs = mock_openai_client.return_value.audio.transcriptions.create.call_args.kwargs
+        assert call_kwargs["model"] == OPENAI_STT_DIARIZATION_MODEL
+        assert call_kwargs["response_format"] == "json"
+        assert call_kwargs["chunking_strategy"] == "auto"
+        assert "prompt" not in call_kwargs
+        assert "timestamp_granularities" not in call_kwargs
+        assert segments == [Segment(start=0, end=0, text="Speaker text")]
+
+    def test_legacy_transcription_request_keeps_verbose_json_and_timestamps(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, OPENAI_STT_LEGACY_MODEL)
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = Transcription(
+            text="",
+            segments=[
+                {
+                    "start": 0,
+                    "end": 1.2,
+                    "text": "Hello",
+                    "words": [{"start": 0, "end": 1.2, "word": "Hello"}],
+                }
+            ],
+        )
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(
+                str(file_path),
+                TranscriptionOptions(word_level_timings=True),
+            )
+        )
+
+        segments = transcriber.get_segments_for_file(str(file_path))
+
+        call_kwargs = mock_openai_client.return_value.audio.transcriptions.create.call_args.kwargs
+        assert call_kwargs["model"] == OPENAI_STT_LEGACY_MODEL
+        assert call_kwargs["response_format"] == "verbose_json"
+        assert call_kwargs["timestamp_granularities"] == ["word"]
+        assert segments == [Segment(start=0, end=1200, text="Hello")]
+
+    def test_translation_uses_legacy_model_for_known_gpt_model(
+        self, mock_openai_client, tmp_path
+    ):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, OPENAI_STT_DEFAULT_MODEL)
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(
+                str(file_path),
+                TranscriptionOptions(task=Task.TRANSLATE, initial_prompt="English style"),
+            )
+        )
+
+        transcriber.get_segments_for_file(str(file_path))
+
+        call_kwargs = mock_openai_client.return_value.audio.translations.create.call_args.kwargs
+        assert call_kwargs["model"] == OPENAI_STT_LEGACY_MODEL
+        assert call_kwargs["response_format"] == "verbose_json"
+        assert call_kwargs["prompt"] == "English style"
+        assert not mock_openai_client.return_value.audio.transcriptions.create.called
+
+    def test_translation_keeps_custom_model_id(self, mock_openai_client, tmp_path):
+        settings = Settings()
+        settings.clear()
+        settings.set_value(Settings.Key.OPENAI_API_MODEL, "custom-transcribe")
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(
+                str(file_path),
+                TranscriptionOptions(task=Task.TRANSLATE),
+            )
+        )
+
+        transcriber.get_segments_for_file(str(file_path))
+
+        call_kwargs = mock_openai_client.return_value.audio.translations.create.call_args.kwargs
+        assert call_kwargs["model"] == "custom-transcribe"
+
+    def test_get_segments_handles_plain_text_response(self, mock_openai_client, tmp_path):
+        Settings().clear()
+        file_path = tmp_path / "audio.mp3"
+        file_path.write_bytes(b"audio")
+        mock_openai_client.return_value.audio.transcriptions.create.return_value = "Hello plain"
+
+        transcriber = OpenAIWhisperAPIFileTranscriber(
+            task=self.make_task(str(file_path))
+        )
+
+        assert transcriber.get_segments_for_file(str(file_path)) == [
+            Segment(start=0, end=0, text="Hello plain")
+        ]
