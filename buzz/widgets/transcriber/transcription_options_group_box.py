@@ -5,12 +5,24 @@ from typing import Optional, List
 
 from PyQt6.QtCore import pyqtSignal, QLocale
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QGroupBox, QWidget, QFormLayout, QComboBox, QLabel, QHBoxLayout
+from PyQt6.QtWidgets import (
+    QGroupBox,
+    QWidget,
+    QFormLayout,
+    QComboBox,
+    QLabel,
+    QHBoxLayout,
+    QLineEdit,
+)
 
 from buzz.locale import _
 from buzz.settings.settings import Settings
 from buzz.widgets.icon import INFO_ICON_PATH
 from buzz.model_loader import ModelType, WhisperModelSize, get_whisper_cpp_file_path, is_mms_model
+from buzz.transcriber.openai_stt_models import (
+    OPENAI_STT_DEFAULT_MODEL,
+    openai_stt_model_display_text,
+)
 from buzz.transcriber.transcriber import TranscriptionOptions, Task
 from buzz.widgets.model_type_combo_box import ModelTypeComboBox
 from buzz.widgets.openai_api_key_line_edit import OpenAIAPIKeyLineEdit
@@ -73,6 +85,16 @@ class TranscriptionOptionsGroupBox(QGroupBox):
             self.on_openai_access_token_edit_changed
         )
 
+        self.openai_model_line_edit = QLineEdit(parent=self)
+        self.openai_model_line_edit.setObjectName("openai_model_line_edit")
+        self.openai_model_line_edit.setReadOnly(True)
+
+        self.openai_model_hint_label = QLabel(
+            _("Изменить модель: Справка -> Настройки -> Общие"),
+            parent=self,
+        )
+        self.openai_model_hint_label.setObjectName("openai_model_hint_label")
+
         self.hugging_face_search_line_edit = HuggingFaceSearchLineEdit(
             default_value=default_transcription_options.model.hugging_face_model_id
         )
@@ -124,6 +146,8 @@ class TranscriptionOptionsGroupBox(QGroupBox):
 
         self.form_layout.addRow("", self.hugging_face_search_line_edit)
         self.form_layout.addRow(_("Api Key:"), self.openai_access_token_edit)
+        self.form_layout.addRow(_("Модель OpenAI:"), self.openai_model_line_edit)
+        self.form_layout.addRow("", self.openai_model_hint_label)
         self.form_layout.addRow(_("Task:"), self.tasks_combo_box)
         self.form_layout.addRow(_("Language:"), self.languages_combo_box)
         self.form_layout.addRow(_("Language:"), self.mms_language_line_edit)
@@ -242,6 +266,13 @@ class TranscriptionOptionsGroupBox(QGroupBox):
         self.form_layout.setRowVisible(
             self.openai_access_token_edit, model_type == ModelType.OPEN_AI_WHISPER_API
         )
+        self.openai_model_line_edit.setText(self.openai_model_display_text())
+        self.form_layout.setRowVisible(
+            self.openai_model_line_edit, model_type == ModelType.OPEN_AI_WHISPER_API
+        )
+        self.form_layout.setRowVisible(
+            self.openai_model_hint_label, model_type == ModelType.OPEN_AI_WHISPER_API
+        )
 
         # Note on Apple Silicon Macs
         if self.load_note_tooltip_icon is not None:
@@ -308,3 +339,10 @@ class TranscriptionOptionsGroupBox(QGroupBox):
             if self.transcription_options.language != dropdown_lang:
                 self.transcription_options.language = dropdown_lang if dropdown_lang else None
                 self.transcription_options_changed.emit(self.transcription_options)
+
+    def openai_model_display_text(self) -> str:
+        model_id = self.settings.value(
+            Settings.Key.OPENAI_API_MODEL,
+            OPENAI_STT_DEFAULT_MODEL,
+        )
+        return openai_stt_model_display_text(model_id)

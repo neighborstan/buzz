@@ -6,6 +6,15 @@ from PyQt6.QtWidgets import QComboBox, QWidget
 from buzz.model_loader import ModelType
 
 
+MODEL_TYPE_DISPLAY_LABELS = {
+    ModelType.OPEN_AI_WHISPER_API: "OpenAI API",
+}
+
+
+def model_type_display_text(model_type: ModelType) -> str:
+    return MODEL_TYPE_DISPLAY_LABELS.get(model_type, model_type.value)
+
+
 class ModelTypeComboBox(QComboBox):
     changed = pyqtSignal(ModelType)
 
@@ -23,11 +32,15 @@ class ModelTypeComboBox(QComboBox):
             ]
 
         for model_type in model_types:
-            self.addItem(model_type.value)
+            self.addItem(model_type_display_text(model_type), model_type)
 
-        self.currentTextChanged.connect(self.on_text_changed)
+        self.currentIndexChanged.connect(self.on_index_changed)
         if default_model is not None:
-            self.setCurrentText(default_model.value)
+            index = self.findData(default_model)
+            if index != -1:
+                self.setCurrentIndex(index)
 
-    def on_text_changed(self, text: str):
-        self.changed.emit(ModelType(text))
+    def on_index_changed(self, index: int):
+        model_type = self.itemData(index)
+        if model_type is not None:
+            self.changed.emit(model_type)

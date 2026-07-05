@@ -19,6 +19,9 @@ from buzz.widgets.transcriber.file_transcription_form_widget import (
     FileTranscriptionFormWidget,
 )
 from buzz.widgets.transcriber.file_transcriber_widget import FileTranscriberWidget
+from buzz.widgets.transcriber.transcription_options_group_box import (
+    TranscriptionOptionsGroupBox,
+)
 from tests.audio import test_audio_path
 
 
@@ -79,9 +82,14 @@ class TestFileTranscriberWidget:
         assert widget.windowTitle() == "whisper-french.mp3"
 
     def test_should_emit_triggered_event(self, qtbot: QtBot):
-        widget = FileTranscriberWidget(
-            file_paths=[test_audio_path],
-        )
+        with patch.object(
+            FileTranscriberWidget, "load_preferences", return_value=local_preferences()
+        ), patch.object(
+            TranscriptionModel, "get_local_model_path", return_value="model-path"
+        ):
+            widget = FileTranscriberWidget(
+                file_paths=[test_audio_path],
+            )
         qtbot.add_widget(widget)
 
         mock_triggered = Mock()
@@ -288,3 +296,73 @@ class TestFileTranscriptionFormWidget:
         }
 
         assert OutputFormat.MD.value.upper() in checkbox_texts
+
+
+class TestTranscriptionOptionsGroupBox:
+    def test_should_show_openai_model_field_for_openai_backend(self, qtbot: QtBot):
+        Settings().set_value(
+            Settings.Key.OPENAI_API_MODEL, "gpt-4o-transcribe-diarize"
+        )
+        widget = TranscriptionOptionsGroupBox(
+            default_transcription_options=TranscriptionOptions(
+                model=TranscriptionModel(model_type=ModelType.OPEN_AI_WHISPER_API)
+            )
+        )
+        qtbot.add_widget(widget)
+
+        label = widget.form_layout.labelForField(widget.openai_model_line_edit)
+
+        assert label.text() == "Модель OpenAI:"
+        assert widget.openai_model_line_edit.isReadOnly()
+        assert widget.openai_model_line_edit.text() == "gpt-4o-transcribe-diarize"
+        assert not widget.openai_model_line_edit.isHidden()
+        assert widget.openai_model_hint_label.text() == (
+            "Изменить модель: Справка -> Настройки -> Общие"
+        )
+        assert not widget.openai_model_hint_label.isHidden()
+        assert not widget.openai_access_token_edit.isHidden()
+
+    def test_should_hide_openai_model_field_for_local_backend(self, qtbot: QtBot):
+        widget = TranscriptionOptionsGroupBox(
+            default_transcription_options=TranscriptionOptions(
+                model=TranscriptionModel(model_type=ModelType.WHISPER)
+            )
+        )
+        qtbot.add_widget(widget)
+
+        assert widget.openai_model_line_edit.isHidden()
+        assert widget.openai_model_hint_label.isHidden()
+        assert widget.openai_access_token_edit.isHidden()
+
+    def test_should_show_custom_openai_model_id(self, qtbot: QtBot):
+        Settings().set_value(Settings.Key.OPENAI_API_MODEL, "custom-transcribe-model")
+        widget = TranscriptionOptionsGroupBox(
+            default_transcription_options=TranscriptionOptions(
+                model=TranscriptionModel(model_type=ModelType.OPEN_AI_WHISPER_API)
+            )
+        )
+        qtbot.add_widget(widget)
+
+        assert widget.openai_model_line_edit.text() == "custom-transcribe-model"
+
+    def test_should_refresh_openai_model_display_when_backend_changes(
+        self, qtbot: QtBot
+    ):
+        Settings().set_value(
+            Settings.Key.OPENAI_API_MODEL, "gpt-4o-mini-transcribe"
+        )
+        widget = TranscriptionOptionsGroupBox(
+            default_transcription_options=TranscriptionOptions(
+                model=TranscriptionModel(model_type=ModelType.WHISPER)
+            )
+        )
+        qtbot.add_widget(widget)
+
+        widget.model_type_combo_box.setCurrentText("OpenAI API")
+
+        assert widget.transcription_options.model.model_type == (
+            ModelType.OPEN_AI_WHISPER_API
+        )
+        assert widget.openai_model_line_edit.text() == "gpt-4o-mini-transcribe"
+        assert not widget.openai_model_line_edit.isHidden()
+        assert not widget.openai_model_hint_label.isHidden()
