@@ -7,14 +7,23 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QPushButton,
+    QLabel,
 )
 
+from buzz.cost_estimation import (
+    build_cost_breakdown,
+    format_cost_preview,
+    probe_media_duration_seconds,
+)
 from buzz.dialogs import show_model_download_error_dialog
 from buzz.locale import _
 from buzz.model_loader import ModelDownloader, WhisperModelSize, ModelType
+from buzz.plugins.transcript_post_processing import models as post_processing_models
+from buzz.plugins.transcript_post_processing.plugin import _build_cleanup_prompt
 from buzz.paths import file_path_as_title
 from buzz.settings.settings import Settings
 from buzz.store.keyring_store import get_password, Key
+from buzz.transcriber.openai_stt_models import OPENAI_STT_DEFAULT_MODEL
 from buzz.transcriber.transcriber import (
     FileTranscriptionOptions,
     TranscriptionOptions,
@@ -43,6 +52,7 @@ class FileTranscriberWidget(QWidget):
         self,
         file_paths: Optional[List[str]] = None,
         url: Optional[str] = None,
+        plugin_manager=None,
         parent: Optional[QWidget] = None,
         flags: Qt.WindowType = Qt.WindowType.Widget,
     ) -> None:
@@ -50,6 +60,8 @@ class FileTranscriberWidget(QWidget):
 
         self.url = url
         self.file_paths = file_paths
+        self.plugin_manager = plugin_manager
+        self.media_duration_seconds = self.probe_total_media_duration_seconds()
 
         self.setWindowTitle(self.get_title())
 
@@ -78,7 +90,14 @@ class FileTranscriberWidget(QWidget):
         )
 
         self.form_widget.transcription_options_changed.connect(
-            self.reset_transcriber_controls
+            self.on_form_transcription_options_changed
+        )
+
+        self.cost_preview_label = QLabel(self)
+        self.cost_preview_label.setObjectName("cost_preview_label")
+        self.cost_preview_label.setWordWrap(True)
+        self.cost_preview_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
         )
 
         self.run_button = QPushButton(_("Run"), self)
@@ -86,6 +105,7 @@ class FileTranscriberWidget(QWidget):
         self.run_button.clicked.connect(self.on_click_run)
 
         layout.addWidget(self.form_widget)
+        layout.addWidget(self.cost_preview_label)
         layout.addWidget(self.run_button, 0, Qt.AlignmentFlag.AlignRight)
 
         self.setLayout(layout)
@@ -93,6 +113,7 @@ class FileTranscriberWidget(QWidget):
         self.setFixedHeight(self.sizeHint().height())
 
         self.reset_transcriber_controls()
+        self.update_cost_preview()
 
     def get_title(self) -> str:
         if self.file_paths is not None:
@@ -114,6 +135,85 @@ class FileTranscriberWidget(QWidget):
         )
         preferences.save(settings=self.settings.settings)
         self.settings.settings.endGroup()
+
+    def probe_total_media_duration_seconds(self) -> Optional[float]:
+        if not self.file_paths:
+            return None
+
+        total = 0.0
+        for file_path in self.file_paths:
+            duration = probe_media_duration_seconds(file_path)
+            if duration is None:
+                return None
+            total += duration
+        return total if total > 0 else None
+
+    def on_form_transcription_options_changed(
+        self, options: Tuple[TranscriptionOptions, FileTranscriptionOptions]
+    ):
+        self.transcription_options, self.file_transcription_options = options
+        self.reset_transcriber_controls()
+        self.update_cost_preview()
+
+    def update_cost_preview(self):
+        post_processing_config = self.get_post_processing_cost_config()
+        include_post_processing = post_processing_config is not None
+        include_transcription = (
+            self.transcription_options.model.model_type == ModelType.OPEN_AI_WHISPER_API
+        )
+        stt_model_id = self.settings.value(
+            Settings.Key.OPENAI_API_MODEL,
+            OPENAI_STT_DEFAULT_MODEL,
+        )
+
+        breakdown = build_cost_breakdown(
+            stt_model_id=stt_model_id,
+            include_transcription=include_transcription,
+            duration_seconds=self.media_duration_seconds,
+            post_processing_model_id=(
+                post_processing_config.get("model") if post_processing_config else None
+            ),
+            include_post_processing=include_post_processing,
+            post_processing_prompt=(
+                post_processing_config.get("prompt") if post_processing_config else None
+            ),
+            reasoning_effort=(
+                post_processing_config.get("reasoning_effort")
+                if post_processing_config
+                else None
+            ),
+        )
+        self.cost_preview_label.setText(format_cost_preview(breakdown))
+        self.cost_preview_label.setStyleSheet(
+            "color: #9f2d20;" if breakdown.warnings else ""
+        )
+        self.setFixedHeight(self.sizeHint().height())
+
+    def get_post_processing_cost_config(self) -> Optional[dict]:
+        if self.plugin_manager is None:
+            return None
+        try:
+            if not self.plugin_manager.is_enabled("transcript_post_processing"):
+                return None
+            config = self.plugin_manager.get_config("transcript_post_processing")
+        except Exception:
+            logging.debug(
+                "Unable to read transcript post-processing config",
+                exc_info=True,
+            )
+            return None
+
+        if not _coerce_bool(config.get("save_to_file", True)):
+            return None
+        if not (config.get("api_key") or "").strip():
+            return None
+
+        model = post_processing_models.normalize_model_id(config.get("model"))
+        return {
+            "model": model,
+            "prompt": _build_cleanup_prompt(config),
+            "reasoning_effort": config.get("reasoning_effort"),
+        }
 
     def on_click_run(self):
         self.run_button.setDisabled(True)
@@ -200,3 +300,13 @@ class FileTranscriberWidget(QWidget):
             self.model_loader.cancel()
         self.save_preferences()
         super().closeEvent(event)
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    if isinstance(value, int):
+        return value != 0
+    return bool(value)

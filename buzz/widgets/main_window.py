@@ -309,6 +309,7 @@ class MainWindow(QMainWindow):
         file_transcriber_window = FileTranscriberWidget(
             file_paths=file_paths,
             url=url,
+            plugin_manager=self.plugin_manager,
             parent=self,
             flags=Qt.WindowType.Window,
         )

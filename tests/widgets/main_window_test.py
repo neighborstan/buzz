@@ -358,6 +358,27 @@ class TestMainWindow:
         mock_open.assert_not_called()
         window.close()
 
+    def test_open_file_transcriber_passes_plugin_manager(
+        self, qtbot, transcription_service
+    ):
+        window = MainWindow(transcription_service)
+        qtbot.add_widget(window)
+
+        with patch("buzz.widgets.main_window.FileTranscriberWidget") as widget_cls:
+            widget = Mock()
+            widget_cls.return_value = widget
+
+            window.open_file_transcriber_widget(
+                file_paths=[get_test_asset("whisper-french.mp3")]
+            )
+
+        assert widget_cls.call_args.kwargs["plugin_manager"] is window.plugin_manager
+        widget.triggered.connect.assert_called_once_with(
+            window.on_file_transcriber_triggered
+        )
+        widget.show.assert_called_once()
+        window.close()
+
     def test_remembers_last_import_folder_for_file_dialog(
         self, qtbot, transcription_service
     ):
